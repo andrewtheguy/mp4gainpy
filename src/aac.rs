@@ -2,7 +2,11 @@
 //!
 //! Ported from mp3rgain `src/aac.rs` (MIT). Stripped of the public
 //! `AacAnalysis`, undo-tag plumbing, and the file-based entry points —
-//! everything here runs on `&[u8]` / `&mut [u8]`.
+//! the Python-facing API. The bytes path runs on `&[u8]` / `&mut [u8]`; the
+//! file path reads MP4 metadata and AAC samples incrementally.
+
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
 
 use crate::aac_codebooks;
 use crate::bits::{adjust_gain_value, read_bits_u8, write_bits_u8};
@@ -22,6 +26,34 @@ use crate::mp4;
 pub(crate) fn apply_gain_to_bytes(data: &mut [u8], gain_steps: i32) -> Result<usize> {
     let locations = analyze_locations(data)?;
     Ok(apply_gain_to_data(data, &locations, gain_steps))
+}
+
+pub(crate) struct AacGainPlan {
+    locations: Vec<AacGainLocation>,
+}
+
+pub(crate) fn analyze_file(src: &mut File) -> Result<AacGainPlan> {
+    Ok(AacGainPlan {
+        locations: analyze_locations_in_file(src)?,
+    })
+}
+
+/// Apply gain to a source file while keeping memory bounded by metadata and
+/// one AAC sample. The source is copied to `dst`, then only the located
+/// `global_gain` bits are patched in `dst`.
+pub(crate) fn apply_gain_plan_to_file(
+    src: &mut File,
+    dst: &mut File,
+    plan: &AacGainPlan,
+    gain_steps: i32,
+) -> Result<usize> {
+    src.seek(SeekFrom::Start(0))?;
+    dst.seek(SeekFrom::Start(0))?;
+    std::io::copy(src, dst)?;
+
+    let modified = apply_gain_to_file_data(dst, &plan.locations, gain_steps)?;
+    dst.flush()?;
+    Ok(modified)
 }
 
 fn analyze_locations(data: &[u8]) -> Result<Vec<AacGainLocation>> {
@@ -70,6 +102,137 @@ fn analyze_locations(data: &[u8]) -> Result<Vec<AacGainLocation>> {
     Ok(all_locations)
 }
 
+fn analyze_locations_in_file(file: &mut File) -> Result<Vec<AacGainLocation>> {
+    if !is_mp4_file(file)? {
+        return Err(Error::NotMp4);
+    }
+
+    let moov_data = read_top_level_box(file, mp4::MOOV)?.ok_or(Error::NoMoovBox)?;
+    let (sample_table, stsd_pos) = build_sample_table(&moov_data)?;
+    let sample_rate = parse_audio_config(&moov_data, stsd_pos)?;
+    let file_len = file.seek(SeekFrom::End(0))?;
+
+    let mut all_locations = Vec::new();
+    let mut parse_warnings = 0u32;
+    let mut sample_data = Vec::new();
+
+    for (idx, entry) in sample_table.iter().enumerate() {
+        let sample_end = match entry.file_offset.checked_add(entry.size as u64) {
+            Some(end) => end,
+            None => {
+                parse_warnings += 1;
+                continue;
+            }
+        };
+
+        if sample_end > file_len {
+            parse_warnings += 1;
+            continue;
+        }
+
+        sample_data.resize(entry.size as usize, 0);
+        file.seek(SeekFrom::Start(entry.file_offset))?;
+        file.read_exact(&mut sample_data)?;
+
+        let mut reader = BitReader::new(&sample_data);
+
+        match parse_raw_data_block(&mut reader, sample_rate) {
+            Ok(locations) => {
+                for mut loc in locations {
+                    loc.sample_index = idx as u32;
+                    loc.file_offset = entry.file_offset + loc.sample_byte_offset as u64;
+                    all_locations.push(loc);
+                }
+            }
+            Err(_) => {
+                parse_warnings += 1;
+            }
+        }
+    }
+
+    if all_locations.is_empty() && parse_warnings > 0 {
+        return Err(Error::AacParseFailure {
+            warnings: parse_warnings,
+        });
+    }
+
+    Ok(all_locations)
+}
+
+fn is_mp4_file(file: &mut File) -> Result<bool> {
+    file.seek(SeekFrom::Start(0))?;
+
+    let mut prefix = Vec::with_capacity(128);
+    {
+        let mut limited = file.take(128);
+        limited.read_to_end(&mut prefix)?;
+    }
+
+    file.seek(SeekFrom::Start(0))?;
+    Ok(mp4::is_mp4(&prefix))
+}
+
+fn read_top_level_box(file: &mut File, box_type: u32) -> Result<Option<Vec<u8>>> {
+    let file_len = file.seek(SeekFrom::End(0))?;
+    file.seek(SeekFrom::Start(0))?;
+
+    while file.stream_position()? + 8 <= file_len {
+        let pos = file.stream_position()?;
+        let header = match mp4::BoxHeader::read(file)? {
+            Some(header) => header,
+            None => break,
+        };
+        let size = effective_box_size(&header, pos, file_len)?;
+
+        if header.box_type == box_type {
+            let size_usize = usize::try_from(size).map_err(|_| Error::AacParse {
+                message: "MP4 box too large to read".into(),
+            })?;
+            file.seek(SeekFrom::Start(pos))?;
+            let mut data = vec![0u8; size_usize];
+            file.read_exact(&mut data)?;
+
+            if header.size == 0 {
+                let size_u32 = u32::try_from(size).map_err(|_| Error::AacParse {
+                    message: "size-0 MP4 box too large to normalize".into(),
+                })?;
+                data[0..4].copy_from_slice(&size_u32.to_be_bytes());
+            }
+
+            return Ok(Some(data));
+        }
+
+        file.seek(SeekFrom::Start(pos + size))?;
+    }
+
+    Ok(None)
+}
+
+fn effective_box_size(header: &mp4::BoxHeader, pos: u64, file_len: u64) -> Result<u64> {
+    let size = if header.size == 0 {
+        file_len.saturating_sub(pos)
+    } else {
+        header.size
+    };
+
+    if size < header.header_size as u64 {
+        return Err(Error::AacParse {
+            message: "invalid MP4 box size".into(),
+        });
+    }
+
+    let end = pos.checked_add(size).ok_or_else(|| Error::AacParse {
+        message: "MP4 box size overflow".into(),
+    })?;
+    if end > file_len {
+        return Err(Error::AacParse {
+            message: "MP4 box extends past end of file".into(),
+        });
+    }
+
+    Ok(size)
+}
+
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
@@ -82,7 +245,6 @@ struct AacGainLocation {
     bit_offset: u8,
     #[allow(dead_code)]
     channel: u8,
-    #[allow(dead_code)]
     original_gain: u8,
 }
 
@@ -191,8 +353,7 @@ impl<'a> BitReader<'a> {
         let total_bits = self.byte_pos * 8 + self.bit_pos as usize + n;
         self.byte_pos = total_bits / 8;
         self.bit_pos = (total_bits % 8) as u8;
-        if self.byte_pos > self.data.len()
-            || (self.byte_pos == self.data.len() && self.bit_pos > 0)
+        if self.byte_pos > self.data.len() || (self.byte_pos == self.data.len() && self.bit_pos > 0)
         {
             return Err(Error::AacParse {
                 message: "unexpected end of bitstream".into(),
@@ -361,15 +522,11 @@ fn find_audio_stbl(
     let moov_end = moov_start + moov_size;
 
     while search_pos < moov_end {
-        let (trak_pos, trak_header) = match mp4::find_box_in_container(
-            data,
-            search_pos,
-            moov_end - search_pos,
-            mp4::TRAK,
-        ) {
-            Some(x) => x,
-            None => break,
-        };
+        let (trak_pos, trak_header) =
+            match mp4::find_box_in_container(data, search_pos, moov_end - search_pos, mp4::TRAK) {
+                Some(x) => x,
+                None => break,
+            };
 
         if let Some(result) = find_aac_stbl_in_trak(data, &trak_header, trak_pos) {
             return Ok(result);
@@ -389,8 +546,7 @@ fn find_aac_stbl_in_trak(
     let trak_start = trak_pos + trak_header.header_size as usize;
     let trak_size = trak_header.content_size() as usize;
 
-    let (mdia_pos, mdia_h) =
-        mp4::find_box_in_container(data, trak_start, trak_size, mp4::MDIA)?;
+    let (mdia_pos, mdia_h) = mp4::find_box_in_container(data, trak_start, trak_size, mp4::MDIA)?;
     let (minf_pos, minf_h) = mp4::find_box_in_container(
         data,
         mdia_pos + mdia_h.header_size as usize,
@@ -407,8 +563,7 @@ fn find_aac_stbl_in_trak(
     let stbl_start = stbl_pos + stbl_h.header_size as usize;
     let stbl_size = stbl_h.content_size() as usize;
 
-    let (stsd_pos, stsd_h) =
-        mp4::find_box_in_container(data, stbl_start, stbl_size, mp4::STSD)?;
+    let (stsd_pos, stsd_h) = mp4::find_box_in_container(data, stbl_start, stbl_size, mp4::STSD)?;
 
     let entries_start = stsd_pos + stsd_h.header_size as usize + 8;
     if entries_start + 8 > data.len() {
@@ -833,14 +988,7 @@ fn parse_ics(
     let (byte_off, bit_off) = reader.position();
     let global_gain = reader.read_bits(8)? as u8;
 
-    let gain_loc = AacGainLocation::new(
-        0,
-        0,
-        byte_off as u32,
-        bit_off,
-        channel,
-        global_gain,
-    );
+    let gain_loc = AacGainLocation::new(0, 0, byte_off as u32, bit_off, channel, global_gain);
 
     let info = if common_window {
         shared_info.unwrap().clone()
@@ -1042,11 +1190,7 @@ fn write_aac_gain_at(data: &mut [u8], loc: &AacGainLocation, value: u8) {
     write_bits_u8(data, loc.file_offset as usize, loc.bit_offset, value)
 }
 
-fn apply_gain_to_data(
-    data: &mut [u8],
-    locations: &[AacGainLocation],
-    gain_steps: i32,
-) -> usize {
+fn apply_gain_to_data(data: &mut [u8], locations: &[AacGainLocation], gain_steps: i32) -> usize {
     let mut modified = 0usize;
     for loc in locations {
         let current = read_aac_gain_at(data, loc);
@@ -1060,4 +1204,34 @@ fn apply_gain_to_data(
         }
     }
     modified
+}
+
+fn apply_gain_to_file_data(
+    file: &mut File,
+    locations: &[AacGainLocation],
+    gain_steps: i32,
+) -> Result<usize> {
+    let mut modified = 0usize;
+    let mut buf = [0u8; 2];
+
+    for loc in locations {
+        if loc.original_gain == 0 {
+            continue;
+        }
+
+        let new_value = adjust_gain_value(loc.original_gain, gain_steps);
+        if new_value == loc.original_gain {
+            continue;
+        }
+
+        let len = if loc.bit_offset == 0 { 1 } else { 2 };
+        file.seek(SeekFrom::Start(loc.file_offset))?;
+        file.read_exact(&mut buf[..len])?;
+        write_bits_u8(&mut buf[..len], 0, loc.bit_offset, new_value);
+        file.seek(SeekFrom::Start(loc.file_offset))?;
+        file.write_all(&buf[..len])?;
+        modified += 1;
+    }
+
+    Ok(modified)
 }

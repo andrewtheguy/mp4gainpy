@@ -5,6 +5,9 @@ pub enum Error {
     #[error("gain_steps must be non-zero")]
     ZeroGainSteps,
 
+    #[error("source and destination paths must be different")]
+    SameSourceDestination,
+
     #[error("not an MP4/M4A file")]
     NotMp4,
 

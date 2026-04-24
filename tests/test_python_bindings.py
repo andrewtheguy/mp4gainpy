@@ -277,6 +277,17 @@ class Mp4GainPyTest(unittest.TestCase):
             self.assertFalse(dst.exists())
             self.assertEqual(src.read_bytes(), before)
 
+    def test_file_rejects_same_src_dst_and_preserves_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = Path(tmpdir) / "in.m4a"
+            shutil.copy2(TEST_M4A, src)
+            before = src.read_bytes()
+
+            with self.assertRaises(RuntimeError):
+                mp4gainpy.aac_apply_gain_file(str(src), str(src), 2)
+
+            self.assertEqual(src.read_bytes(), before)
+
     def test_file_positive_writes_dst_and_preserves_src(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             src = Path(tmpdir) / "in.m4a"
