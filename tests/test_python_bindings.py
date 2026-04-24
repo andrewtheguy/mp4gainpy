@@ -2,7 +2,9 @@ import importlib.util
 import os
 import platform
 import shutil
+import subprocess
 import struct
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -188,6 +190,12 @@ def _find_module():
         extensions = [".so"]
         prefixes = ["libmp4gainpy", "mp4gainpy"]
 
+    for prefix in prefixes:
+        for ext in extensions:
+            candidate = PROJECT_ROOT / "target" / "maturin" / f"{prefix}{ext}"
+            if candidate.exists():
+                return candidate
+
     for build_type in ["debug", "release"]:
         for prefix in prefixes:
             for ext in extensions:
@@ -198,25 +206,45 @@ def _find_module():
     return None
 
 
-def _load_module():
-    # Prefer whatever's already installed in the active Python env (e.g. via
-    # `maturin develop`). Fall back to loading the raw cdylib from target/.
-    try:
-        import mp4gainpy  # type: ignore[import-not-found]
+def _build_module():
+    subprocess.run(
+        [
+            "uv",
+            "run",
+            "--no-project",
+            "--with",
+            "maturin>=1.9.4,<2.0",
+            "maturin",
+            "develop",
+            "--skip-install",
+            "--features",
+            "python",
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+    )
 
-        return mp4gainpy
-    except ImportError:
-        pass
+
+def _load_module():
+    # Do not import an installed mp4gainpy package here. Local tests should
+    # always exercise the just-built extension from target/maturin, otherwise
+    # a stale site-packages copy can mask Rust changes.
+    if "MP4GAINPY_PYTHON_MODULE" not in os.environ:
+        _build_module()
 
     path = _find_module()
     if path is None:
         raise RuntimeError(
             "Could not find mp4gainpy module. "
-            "Run `uv run maturin develop --features python` first, "
+            "Run `uv run --no-project --with maturin maturin develop "
+            "--skip-install --features python` first, "
             "or set MP4GAINPY_PYTHON_MODULE to the shared library path."
         )
     spec = importlib.util.spec_from_file_location("mp4gainpy", str(path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load mp4gainpy module from {path}")
     mod = importlib.util.module_from_spec(spec)
+    sys.modules["mp4gainpy"] = mod
     spec.loader.exec_module(mod)
     return mod
 

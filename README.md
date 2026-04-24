@@ -67,10 +67,13 @@ locations with `global_gain == 0` are skipped (silence).
 
 ```bash
 uv venv
-uv pip install maturin
-uv run maturin develop --features python
-uv run python -m unittest tests/test_python_bindings.py -v
+uv run --no-project --with 'maturin>=1.9.4,<2.0' maturin develop --skip-install --features python
+uv run --no-sync python -m unittest tests/test_python_bindings.py -v
 ```
+
+The test loader also runs the `maturin develop --skip-install` build itself
+and imports the generated extension from `target/maturin`, not from an
+installed `site-packages` copy.
 
 The `tests/testdata/tagged_tone.m4a` fixture is committed; to regenerate it
 with ffmpeg, run `testdata/regenerate.sh`.
