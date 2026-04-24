@@ -64,10 +64,8 @@ bitstream). One step is 1.5 dB. If you want to think in dB, just divide:
 Zero steps is a no-op; gain locations are saturating-clamped to `0..=255`;
 locations with `global_gain == 0` are skipped (silence).
 
-The file API appends a small top-level MP4 `uuid` box
-(`95a58770-4ba7-42ee-9e88-340e58bf3580`) to the destination with the applied
-`gain_steps` and `gain_step_db`. This records the operation without rewriting
-`moov` metadata or moving existing media data.
+The file API writes ffprobe-visible MP4 metadata to the destination:
+`TAG:description=m4againpy version=1 gain_steps=<n> gain_step_db=1.5`.
 
 ## Development
 
