@@ -1,9 +1,15 @@
 # m4againpy
 
-Minimal Python + Rust library for **static gain adjustment of AAC/M4A audio** based on https://github.com/M-Igashi/mp3rgain — but
-without extra features such as mp3, loudness analysis or undo tags. It locates the `global_gain` fields in
-the AAC bitstream, adds/subtracts a fixed number of steps, and records the
-applied gain step in destination-file metadata.
+Minimal Python + Rust library for **fixed-step gain adjustment of AAC audio in
+M4A/MP4 files**. It is based on https://github.com/M-Igashi/mp3rgain, narrowed
+to AAC gain rewriting only: no MP3 support, loudness analysis, replaygain tags,
+or undo metadata.
+
+The library finds AAC `global_gain` fields in the bitstream and adds or
+subtracts the requested number of native AAC gain steps. Unlike the original
+implementation, the file API streams source audio to a separate destination
+file instead of modifying the input in place; it patches only the gain bits and
+records the applied step in a custom MP4 metadata tag.
 
 ## Installation
 
