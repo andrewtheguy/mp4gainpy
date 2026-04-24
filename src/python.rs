@@ -16,8 +16,12 @@ fn aac_apply_gain_py<'py>(
 
 #[pyfunction]
 #[pyo3(name = "aac_apply_gain_file")]
-fn aac_apply_gain_file_py(file_path: &str, gain_steps: i32) -> PyResult<usize> {
-    crate::aac_apply_gain_file(Path::new(file_path), gain_steps)
+fn aac_apply_gain_file_py(
+    src_path: &str,
+    dst_path: &str,
+    gain_steps: i32,
+) -> PyResult<usize> {
+    crate::aac_apply_gain_file(Path::new(src_path), Path::new(dst_path), gain_steps)
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 

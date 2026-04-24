@@ -16,13 +16,10 @@ use crate::mp4;
 /// Apply gain to an AAC/M4A byte buffer, in-place. Returns the number of
 /// `global_gain` locations that were actually modified.
 ///
-/// - `gain_steps == 0` is a no-op.
-/// - Locations whose current `global_gain` is 0 (silence) are skipped.
-/// - Saturating clamp at 0..=255.
+/// Callers must pass a non-zero `gain_steps`; the public API enforces this.
+/// Locations whose current `global_gain` is 0 (silence) are skipped.
+/// Saturating clamp at 0..=255.
 pub(crate) fn apply_gain_to_bytes(data: &mut [u8], gain_steps: i32) -> Result<usize> {
-    if gain_steps == 0 {
-        return Ok(0);
-    }
     let locations = analyze_locations(data)?;
     Ok(apply_gain_to_data(data, &locations, gain_steps))
 }

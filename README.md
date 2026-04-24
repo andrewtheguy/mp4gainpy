@@ -44,8 +44,10 @@ with open("track.m4a", "rb") as f:
 louder = mp4gainpy.aac_apply_gain(data, 2)   # +2 steps  (~+3.0 dB)
 softer = mp4gainpy.aac_apply_gain(data, -2)  # -2 steps  (~-3.0 dB)
 
-# File in-place
-mp4gainpy.aac_apply_gain_file("track.m4a", 2)
+# File: read src, apply gain, write dst. src is never overwritten.
+mp4gainpy.aac_apply_gain_file("track.m4a", "track_louder.m4a", 2)
+
+# gain_steps == 0 raises RuntimeError in both variants.
 
 # Step size is 1.5 dB by AAC spec
 mp4gainpy.GAIN_STEP_DB  # 1.5

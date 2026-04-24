@@ -230,9 +230,10 @@ class Mp4GainPyTest(unittest.TestCase):
 
     # -- bytes API --
 
-    def test_bytes_zero_is_noop(self):
+    def test_bytes_zero_raises(self):
         data = TEST_M4A.read_bytes()
-        self.assertEqual(mp4gainpy.aac_apply_gain(data, 0), data)
+        with self.assertRaises(RuntimeError):
+            mp4gainpy.aac_apply_gain(data, 0)
 
     def test_bytes_preserves_length(self):
         data = TEST_M4A.read_bytes()
@@ -265,30 +266,62 @@ class Mp4GainPyTest(unittest.TestCase):
 
     # -- file API --
 
-    def test_file_zero_is_noop(self):
+    def test_file_zero_raises_and_does_not_create_dst(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir) / "test.m4a"
-            shutil.copy2(TEST_M4A, tmp)
-            before = tmp.read_bytes()
-            self.assertEqual(mp4gainpy.aac_apply_gain_file(str(tmp), 0), 0)
-            self.assertEqual(tmp.read_bytes(), before)
+            src = Path(tmpdir) / "in.m4a"
+            dst = Path(tmpdir) / "out.m4a"
+            shutil.copy2(TEST_M4A, src)
+            before = src.read_bytes()
+            with self.assertRaises(RuntimeError):
+                mp4gainpy.aac_apply_gain_file(str(src), str(dst), 0)
+            self.assertFalse(dst.exists())
+            self.assertEqual(src.read_bytes(), before)
 
-    def test_file_positive_mutates(self):
+    def test_file_positive_writes_dst_and_preserves_src(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir) / "test.m4a"
-            shutil.copy2(TEST_M4A, tmp)
-            before = tmp.read_bytes()
-            modified = mp4gainpy.aac_apply_gain_file(str(tmp), 2)
+            src = Path(tmpdir) / "in.m4a"
+            dst = Path(tmpdir) / "out.m4a"
+            shutil.copy2(TEST_M4A, src)
+            original = src.read_bytes()
+
+            modified = mp4gainpy.aac_apply_gain_file(str(src), str(dst), 2)
             self.assertGreater(modified, 0)
-            self.assertNotEqual(tmp.read_bytes(), before)
+
+            self.assertTrue(dst.exists())
+            dst_bytes = dst.read_bytes()
+            self.assertEqual(len(dst_bytes), len(original))
+            self.assertNotEqual(dst_bytes, original)
+            # src must be untouched
+            self.assertEqual(src.read_bytes(), original)
+
+    def test_file_src_preserved_on_negative_steps(self):
+        """Second explicit check: negative gain also leaves src untouched."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = Path(tmpdir) / "in.m4a"
+            dst = Path(tmpdir) / "out.m4a"
+            shutil.copy2(TEST_M4A, src)
+            original = src.read_bytes()
+
+            mp4gainpy.aac_apply_gain_file(str(src), str(dst), -3)
+            self.assertEqual(src.read_bytes(), original)
 
     def test_file_nonexistent_raises(self):
-        with self.assertRaises(RuntimeError):
-            mp4gainpy.aac_apply_gain_file("/nonexistent/path/file.m4a", 2)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dst = Path(tmpdir) / "out.m4a"
+            with self.assertRaises(RuntimeError):
+                mp4gainpy.aac_apply_gain_file(
+                    "/nonexistent/path/file.m4a", str(dst), 2
+                )
+            self.assertFalse(dst.exists())
 
     def test_file_non_m4a_raises(self):
-        with self.assertRaises(RuntimeError):
-            mp4gainpy.aac_apply_gain_file(str(PROJECT_ROOT / ".gitignore"), 2)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dst = Path(tmpdir) / "out.m4a"
+            with self.assertRaises(RuntimeError):
+                mp4gainpy.aac_apply_gain_file(
+                    str(PROJECT_ROOT / ".gitignore"), str(dst), 2
+                )
+            self.assertFalse(dst.exists())
 
 
 class MetadataPreservationTest(unittest.TestCase):
@@ -316,13 +349,17 @@ class MetadataPreservationTest(unittest.TestCase):
 
     def test_container_bytes_outside_samples_unchanged_file_api(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir) / "test.m4a"
-            shutil.copy2(TEST_M4A, tmp)
-            redacted_original = _redact_sample_bytes(tmp.read_bytes())
+            src = Path(tmpdir) / "in.m4a"
+            dst = Path(tmpdir) / "out.m4a"
+            shutil.copy2(TEST_M4A, src)
+            redacted_original = _redact_sample_bytes(src.read_bytes())
 
-            mp4gainpy.aac_apply_gain_file(str(tmp), 3)
-            redacted_modified = _redact_sample_bytes(tmp.read_bytes())
-            self.assertEqual(redacted_original, redacted_modified)
+            mp4gainpy.aac_apply_gain_file(str(src), str(dst), 3)
+
+            # src untouched
+            self.assertEqual(_redact_sample_bytes(src.read_bytes()), redacted_original)
+            # dst's container bytes match src's
+            self.assertEqual(_redact_sample_bytes(dst.read_bytes()), redacted_original)
 
     def test_sample_byte_ranges_unchanged(self):
         """stsz/stsc/stco values (sample sizes + chunk offsets) must not move."""
@@ -411,13 +448,19 @@ class TaggedFixtureTest(unittest.TestCase):
 
     def test_file_api_preserves_tags(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir) / "tagged.m4a"
-            shutil.copy2(TAGGED_M4A, tmp)
-            before = _parse_itunes_tags(tmp.read_bytes())
+            src = Path(tmpdir) / "tagged.m4a"
+            dst = Path(tmpdir) / "tagged_out.m4a"
+            shutil.copy2(TAGGED_M4A, src)
+            src_original = src.read_bytes()
+            before = _parse_itunes_tags(src_original)
 
-            modified = mp4gainpy.aac_apply_gain_file(str(tmp), 4)
+            modified = mp4gainpy.aac_apply_gain_file(str(src), str(dst), 4)
             self.assertGreater(modified, 0)
-            after = _parse_itunes_tags(tmp.read_bytes())
+
+            # src untouched
+            self.assertEqual(src.read_bytes(), src_original)
+            # dst has identical tags
+            after = _parse_itunes_tags(dst.read_bytes())
             self.assertEqual(before, after)
 
     def test_gain_actually_applied_on_fixture(self):

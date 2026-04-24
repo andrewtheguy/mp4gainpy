@@ -2,6 +2,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("gain_steps must be non-zero")]
+    ZeroGainSteps,
+
     #[error("not an MP4/M4A file")]
     NotMp4,
 
