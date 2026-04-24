@@ -2,7 +2,7 @@
 //!
 //! Two public functions:
 //!   - [`aac_apply_gain`] – in-memory bytes → bytes.
-//!   - [`aac_apply_gain_file`] – in-place file rewrite.
+//!   - [`aac_apply_gain_file`] – streamed file → file rewrite.
 
 pub const GAIN_STEP_DB: f64 = 1.5;
 

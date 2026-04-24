@@ -6,7 +6,7 @@
 //! iTunes/APE metadata, ReplayGain, undo tags, and track-atom rewriting has
 //! been stripped.
 
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 // Four-cc constants used by the AAC walk.
 pub(crate) const MOOV: u32 = u32::from_be_bytes(*b"moov");
@@ -18,6 +18,10 @@ pub(crate) const STSD: u32 = u32::from_be_bytes(*b"stsd");
 pub(crate) const STCO: u32 = u32::from_be_bytes(*b"stco");
 pub(crate) const CO64: u32 = u32::from_be_bytes(*b"co64");
 pub(crate) const MP4A: u32 = u32::from_be_bytes(*b"mp4a");
+const UUID: u32 = u32::from_be_bytes(*b"uuid");
+const MP4GAINPY_GAIN_UUID: [u8; 16] = [
+    0x95, 0xa5, 0x87, 0x70, 0x4b, 0xa7, 0x42, 0xee, 0x9e, 0x88, 0x34, 0x0e, 0x58, 0xbf, 0x35, 0x80,
+];
 
 #[derive(Debug, Clone)]
 pub(crate) struct BoxHeader {
@@ -148,4 +152,26 @@ pub(crate) fn is_mp4(data: &[u8]) -> bool {
         offset = if offset == 8 { 16 } else { offset + 4 };
     }
     false
+}
+
+/// Append a small top-level `uuid` box recording the gain operation.
+///
+/// This deliberately avoids editing `moov/ilst`, because growing `moov` can
+/// require shifting media data and rewriting chunk offsets on some files.
+pub(crate) fn append_gain_metadata<W: Seek + Write>(
+    writer: &mut W,
+    gain_steps: i32,
+) -> std::io::Result<()> {
+    let payload = format!(
+        "mp4gainpy\nversion=1\ngain_steps={gain_steps}\ngain_step_db={}\n",
+        crate::GAIN_STEP_DB
+    );
+    let box_size = 8usize + MP4GAINPY_GAIN_UUID.len() + payload.len();
+
+    writer.seek(SeekFrom::End(0))?;
+    writer.write_all(&(box_size as u32).to_be_bytes())?;
+    writer.write_all(&UUID.to_be_bytes())?;
+    writer.write_all(&MP4GAINPY_GAIN_UUID)?;
+    writer.write_all(payload.as_bytes())?;
+    writer.flush()
 }
