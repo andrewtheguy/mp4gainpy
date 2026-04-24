@@ -989,25 +989,27 @@ fn parse_spectral_data(
     let huffman_tables = spectrum_huffman_tables();
 
     for g in 0..info.window_groups {
-        for _w in 0..info.window_group_len[g] {
-            for sfb in 0..info.max_sfb {
-                let cb_idx = section.sfb_cb[g][sfb];
-                if matches!(
-                    cb_idx,
-                    ZERO_HCB | NOISE_HCB | INTENSITY_HCB | INTENSITY_HCB2
-                ) {
-                    continue;
-                }
+        // Short-window spectral data is ordered by scalefactor band, then by
+        // each window in the group; reversing that order desynchronizes CPEs.
+        for sfb in 0..info.max_sfb {
+            let cb_idx = section.sfb_cb[g][sfb];
+            if matches!(
+                cb_idx,
+                ZERO_HCB | NOISE_HCB | INTENSITY_HCB | INTENSITY_HCB2
+            ) {
+                continue;
+            }
 
-                let start = bands[sfb];
-                let end = bands[sfb + 1];
-                let width = end - start;
+            let start = bands[sfb];
+            let end = bands[sfb + 1];
+            let width = end - start;
 
-                let cb_info = &aac_codebooks::SPECTRUM_CODEBOOKS[cb_idx as usize - 1];
-                let dim = cb_info.dimension as usize;
-                let num_codewords = width / dim;
-                let huffman_table = &huffman_tables[cb_idx as usize - 1];
+            let cb_info = &aac_codebooks::SPECTRUM_CODEBOOKS[cb_idx as usize - 1];
+            let dim = cb_info.dimension as usize;
+            let num_codewords = width / dim;
+            let huffman_table = &huffman_tables[cb_idx as usize - 1];
 
+            for _w in 0..info.window_group_len[g] {
                 for _ in 0..num_codewords {
                     let symbol = decode_huffman(reader, huffman_table)?;
 

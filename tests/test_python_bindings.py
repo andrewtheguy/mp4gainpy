@@ -588,6 +588,59 @@ class MetadataPreservationTest(unittest.TestCase):
             self.assertEqual(out[ftyp_out[0] : ftyp_out[0] + ftyp_out[1]], original_ftyp)
 
 
+class ShortWindowAacTest(unittest.TestCase):
+    def test_file_api_patches_short_window_stereo_frames_and_ffmpeg_decodes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = Path(tmpdir) / "short_window.m4a"
+            dst = Path(tmpdir) / "short_window_gain.m4a"
+
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    (
+                        "aevalsrc="
+                        "'if(lt(mod(t,0.25),0.018),0.95*sin(2*PI*2800*t),0.04*sin(2*PI*440*t))|"
+                        "if(lt(mod(t,0.25),0.018),0.95*sin(2*PI*3600*t),0.04*sin(2*PI*660*t))'"
+                        ":s=32000:d=3"
+                    ),
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "96k",
+                    str(src),
+                ],
+                check=True,
+            )
+
+            sample_count = len(_sample_byte_ranges(src.read_bytes()))
+            modified = m4againpy.aac_apply_gain_file(str(src), str(dst), 5)
+            self.assertEqual(modified, sample_count * 2)
+
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-i",
+                    str(dst),
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                check=True,
+            )
+
+
 class TaggedFixtureTest(unittest.TestCase):
     """Same guarantees as MetadataPreservationTest, but exercised against an
     ffmpeg-generated fixture with 8 iTunes tags (title, artist, album, date,
