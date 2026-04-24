@@ -1,10 +1,10 @@
 [package]
-name = "mp4gainpy"
+name = "m4againpy"
 version = "0.0.0"
 edition = "2021"
 
 [lib]
-name = "mp4gainpy"
+name = "m4againpy"
 crate-type = ["rlib", "cdylib"]
 
 [features]

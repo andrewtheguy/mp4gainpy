@@ -26,8 +26,8 @@ fn aac_apply_gain_file_py(
 }
 
 #[pymodule]
-#[pyo3(name = "mp4gainpy")]
-fn mp4gainpy_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name = "m4againpy")]
+fn m4againpy_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add(
         "__all__",
         vec!["aac_apply_gain", "aac_apply_gain_file", "GAIN_STEP_DB"],

@@ -3,6 +3,6 @@ revision = 3
 requires-python = ">=3.12"
 
 [[package]]
-name = "mp4gainpy"
+name = "m4againpy"
 version = "0.0.2"
 source = { editable = "." }

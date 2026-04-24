@@ -42,11 +42,11 @@ jobs:
             } > "_pages/simple/${pkg}/index.html"
           }
 
-          generate_index "${GH_REPO}" "mp4gainpy"
+          generate_index "${GH_REPO}" "m4againpy"
 
           cat > _pages/simple/index.html <<'HTML'
           <!DOCTYPE html><html><body>
-          <a href="mp4gainpy/">mp4gainpy</a>
+          <a href="m4againpy/">m4againpy</a>
           </body></html>
           HTML
 

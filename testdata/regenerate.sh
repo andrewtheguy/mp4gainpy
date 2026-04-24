@@ -10,7 +10,7 @@ ffmpeg -hide_banner -loglevel error \
     -f lavfi -i "sine=frequency=440:duration=2:sample_rate=44100" \
     -c:a aac -b:a 128k \
     -metadata title="Gain Test Tone" \
-    -metadata artist="mp4gainpy" \
+    -metadata artist="m4againpy" \
     -metadata album="Fixtures" \
     -metadata date="2026" \
     -metadata genre="Electronic" \

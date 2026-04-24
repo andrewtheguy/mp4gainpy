@@ -3,7 +3,7 @@ requires = ["maturin>=1.9.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "mp4gainpy"
+name = "m4againpy"
 version = "0.0.2"
 description = "Minimal PyO3 bindings for static-gain AAC/M4A adjustment"
 readme = "README.md"

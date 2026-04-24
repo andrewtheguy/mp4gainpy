@@ -19,7 +19,7 @@ pub(crate) const STCO: u32 = u32::from_be_bytes(*b"stco");
 pub(crate) const CO64: u32 = u32::from_be_bytes(*b"co64");
 pub(crate) const MP4A: u32 = u32::from_be_bytes(*b"mp4a");
 const UUID: u32 = u32::from_be_bytes(*b"uuid");
-const MP4GAINPY_GAIN_UUID: [u8; 16] = [
+const M4AGAINPY_GAIN_UUID: [u8; 16] = [
     0x95, 0xa5, 0x87, 0x70, 0x4b, 0xa7, 0x42, 0xee, 0x9e, 0x88, 0x34, 0x0e, 0x58, 0xbf, 0x35, 0x80,
 ];
 
@@ -163,15 +163,15 @@ pub(crate) fn append_gain_metadata<W: Seek + Write>(
     gain_steps: i32,
 ) -> std::io::Result<()> {
     let payload = format!(
-        "mp4gainpy\nversion=1\ngain_steps={gain_steps}\ngain_step_db={}\n",
+        "m4againpy\nversion=1\ngain_steps={gain_steps}\ngain_step_db={}\n",
         crate::GAIN_STEP_DB
     );
-    let box_size = 8usize + MP4GAINPY_GAIN_UUID.len() + payload.len();
+    let box_size = 8usize + M4AGAINPY_GAIN_UUID.len() + payload.len();
 
     writer.seek(SeekFrom::End(0))?;
     writer.write_all(&(box_size as u32).to_be_bytes())?;
     writer.write_all(&UUID.to_be_bytes())?;
-    writer.write_all(&MP4GAINPY_GAIN_UUID)?;
+    writer.write_all(&M4AGAINPY_GAIN_UUID)?;
     writer.write_all(payload.as_bytes())?;
     writer.flush()
 }
